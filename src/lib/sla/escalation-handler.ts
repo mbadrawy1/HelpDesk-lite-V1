@@ -1,23 +1,20 @@
 /**
  * SLA Escalation Handler
  *
- * Processes breached tickets by updating their status, notifying the
- * assigned agent, submitter, and all managers through the existing
- * notification system.
+ * Processes breached tickets by updating their status and delegating
+ * notification delivery to the notification-utils helper.
  */
 
 import prisma from "@/lib/db/prisma";
-import { Role } from "@/generated/prisma/enums";
-import { createNotification } from "@/lib/services/notification.service";
 import { ESCALATION_CHANNEL } from "@/lib/sla/sla-config";
+import { sendEscalationNotifications } from "@/lib/sla/notification-utils";
 import type { BreachedTicket } from "@/lib/sla/escalation-trigger";
 
 /**
  * Processes a single breached ticket:
- * 1. Updates the ticket status to flag it as escalated
- * 2. Notifies the assigned agent (if any)
- * 3. Notifies the ticket submitter
- * 4. Notifies all managers in the system
+ * 1. Verifies the ticket still exists (handles deletion race condition)
+ * 2. Updates the ticket timestamp to record the escalation event
+ * 3. Delegates notification delivery to the notification utility
  *
  * @param ticket - The ticket that has breached its SLA
  */
@@ -46,60 +43,11 @@ export async function escalateTicket(ticket: BreachedTicket): Promise<void> {
     data: { updatedAt: new Date() },
   });
 
-  // Build the escalation message
-  const escalationMessage = buildEscalationMessage(ticket);
-
-  // Notify the assigned agent (if one exists)
-  if (ticket.agentId) {
-    await createNotification({
-      userId: ticket.agentId,
-      ticketId: ticket.id,
-      type: "SLA_BREACH",
-      message: escalationMessage,
-    });
-  }
-
-  // Notify the ticket submitter
-  await createNotification({
-    userId: ticket.submitterId,
-    ticketId: ticket.id,
-    type: "SLA_BREACH",
-    message: `Your ticket "${ticket.title}" has exceeded its SLA response time. It has been escalated to management.`,
-  });
-
-  // Notify all managers in the system
-  const managers = await prisma.user.findMany({
-    where: { role: Role.MANAGER },
-    select: { id: true },
-  });
-
-  for (const manager of managers) {
-    await createNotification({
-      userId: manager.id,
-      ticketId: ticket.id,
-      type: "SLA_ESCALATION",
-      message: escalationMessage,
-    });
-  }
+  // Delegate all notification logic to the utility helper
+  const notificationCount = await sendEscalationNotifications(ticket);
 
   console.log(
-    `[SLA] Escalation complete for ticket ${ticket.id} — notified ${managers.length} manager(s) via channel: ${ESCALATION_CHANNEL}`
-  );
-}
-
-/**
- * Builds a human-readable escalation message for a breached ticket.
- */
-function buildEscalationMessage(ticket: BreachedTicket): string {
-  const hours = Math.floor(ticket.breachedByMinutes / 60);
-  const minutes = ticket.breachedByMinutes % 60;
-  const timeStr =
-    hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-
-  return (
-    `⚠️ SLA BREACH: Ticket "${ticket.title}" (Priority: ${ticket.priority}) ` +
-    `has exceeded its SLA threshold by ${timeStr}. ` +
-    `Status: ${ticket.status}. Immediate attention required.`
+    `[SLA] Escalation complete for ticket ${ticket.id} — sent ${notificationCount} notification(s) via channel: ${ESCALATION_CHANNEL}`
   );
 }
 
