@@ -8,6 +8,7 @@
 import prisma from "@/lib/db/prisma";
 import { TicketStatus } from "@/generated/prisma/enums";
 import { SLA_THRESHOLDS } from "@/lib/sla/sla-config";
+import { processBreachedTickets } from "@/lib/sla/escalation-handler";
 
 /**
  * Represents a ticket that has breached its SLA.
@@ -85,6 +86,7 @@ export async function findBreachedTickets(): Promise<BreachedTicket[]> {
 export async function runEscalationCheck(): Promise<{
   checkedAt: Date;
   breachedCount: number;
+  escalatedCount: number;
   tickets: BreachedTicket[];
 }> {
   const checkedAt = new Date();
@@ -96,9 +98,17 @@ export async function runEscalationCheck(): Promise<{
     `[SLA] Found ${breachedTickets.length} ticket(s) exceeding SLA thresholds`
   );
 
+  // Process all breached tickets through the notification system
+  const escalatedCount = await processBreachedTickets(breachedTickets);
+
+  console.log(
+    `[SLA] Escalation check completed — ${escalatedCount} ticket(s) escalated`
+  );
+
   return {
     checkedAt,
     breachedCount: breachedTickets.length,
+    escalatedCount,
     tickets: breachedTickets,
   };
 }
