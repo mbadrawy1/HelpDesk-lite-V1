@@ -26,6 +26,20 @@ export async function escalateTicket(ticket: BreachedTicket): Promise<void> {
     `[SLA] Escalating ticket "${ticket.title}" (${ticket.id}) — breached by ${ticket.breachedByMinutes} minutes`
   );
 
+  // Guard: verify the ticket still exists before attempting escalation.
+  // A ticket could be deleted between the breach query and this handler running.
+  const existingTicket = await prisma.ticket.findUnique({
+    where: { id: ticket.id },
+    select: { id: true },
+  });
+
+  if (!existingTicket) {
+    console.warn(
+      `[SLA] Ticket ${ticket.id} no longer exists — skipping escalation`
+    );
+    return;
+  }
+
   // Update the ticket's updatedAt timestamp to record the escalation event
   await prisma.ticket.update({
     where: { id: ticket.id },
